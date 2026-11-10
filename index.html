@@ -166,7 +166,7 @@
 <div class="banner" id="banner" role="alert"></div>
 
 <div class="debug" id="debug" hidden>
-  <div class="debugHead"><b>デバッグ</b><button id="dbgCopy">ログをコピー</button><button id="dbgClear">消去</button><button id="dbgClose">閉じる</button></div>
+  <div class="debugHead"><b>デバッグ</b><button id="dbgSave">ファイルに保存</button><button id="dbgCopy">コピー</button><button id="dbgClear">消去</button><button id="dbgClose">閉じる</button></div>
   <div class="debugState" id="dbgState"></div>
   <ul class="debugLog" id="dbgLog"></ul>
 </div>
@@ -320,19 +320,42 @@
     $('debug').hidden = !on;
     store.set('walkslides-debug', on ? '1' : '');
     if (on) {
+      dbg('cmd', 'デバッグモード開始');
       const ul = $('dbgLog'); ul.innerHTML = '';
-      dbgLines.slice(-100).forEach(l => { const li = document.createElement('li'); li.textContent = l; ul.appendChild(li); });
+      dbgLines.slice(-400).forEach(l => { const li = document.createElement('li'); li.textContent = l; ul.appendChild(li); });
       ul.scrollTop = ul.scrollHeight;
     }
   }
   ui.optDebug.addEventListener('change', () => setDebug(ui.optDebug.checked));
   $('dbgClose').addEventListener('click', () => setDebug(false));
-  $('dbgClear').addEventListener('click', () => { dbgLines.length = 0; $('dbgLog').innerHTML = ''; });
+  $('dbgClear').addEventListener('click', () => { dbgLines.length = 0; $('dbgLog').innerHTML = ''; persistDbg(); });
+  function dbgText() {
+    return [
+      '歩きスライド デバッグログ',
+      `保存日時：${new Date().toLocaleString('ja-JP')}`,
+      `URL：${location.href}`,
+      `端末：${navigator.userAgent}`,
+      `画面：${screen.width}x${screen.height} @${devicePixelRatio}　向き：${screen.orientation ? screen.orientation.type : '-'}`,
+      `音声認識API：${SR ? 'あり' : 'なし'}　WebGPU：${'gpu' in navigator ? 'あり' : 'なし'}　https：${isSecureContext}`,
+      '', '--- 現在の状態 ---', $('dbgState').textContent,
+      '', `--- ログ（${dbgLines.length}行）---`, ...dbgLines,
+    ].join('\n');
+  }
+  $('dbgSave').addEventListener('click', () => {
+    const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
+    const blob = new Blob([dbgText()], { type: 'text/plain;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `walk-slides-log-${stamp}.txt`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    dbg('cmd', `ログをファイルに保存：${a.download}`);
+  });
   $('dbgCopy').addEventListener('click', async () => {
-    const text = [$('dbgState').textContent, '', ...dbgLines].join('\n');
+    const text = dbgText();
     try { await navigator.clipboard.writeText(text); $('dbgCopy').textContent = 'コピーしました'; }
     catch (e) { $('dbgCopy').textContent = 'コピー失敗'; }
-    setTimeout(() => { $('dbgCopy').textContent = 'ログをコピー'; }, 1500);
+    setTimeout(() => { $('dbgCopy').textContent = 'コピー'; }, 1500);
   });
   setTimeout(() => setDebug(new URLSearchParams(location.search).has('debug') || store.get('walkslides-debug') === '1'), 0);
   ui.passcode.value = store.get('walkslides-passcode');
@@ -356,18 +379,27 @@
     clearTimeout(heardTimer); heardTimer = setTimeout(() => ui.heard.classList.remove('show'), ms);
   }
   // ================= デバッグ表示 =================
-  const dbgLines = [];
+  // デバッグモード中のログは端末に保存し、再読み込みしても消えないようにする
+  const DBG_KEY = 'walkslides-debuglog';
+  const dbgLines = (() => { try { return JSON.parse(localStorage.getItem(DBG_KEY) || '[]'); } catch (e) { return []; } })();
+  let dbgSaveTimer = 0;
+  function persistDbg() {
+    clearTimeout(dbgSaveTimer);
+    dbgSaveTimer = setTimeout(() => { try { localStorage.setItem(DBG_KEY, JSON.stringify(dbgLines)); } catch (e) {} }, 300);
+  }
   function dbg(kind, msg) {
     const t = new Date().toLocaleTimeString('ja-JP', { hour12: false }) + '.' + String(Date.now() % 1000).padStart(3, '0');
     const line = `${t} [${kind}] ${msg}`;
-    dbgLines.push(line); if (dbgLines.length > 300) dbgLines.shift();
     console.log(line);
+    if (document.getElementById('debug').hidden) return;   // デバッグモードのときだけ記録
+    dbgLines.push(line); while (dbgLines.length > 2000) dbgLines.shift();
+    persistDbg();
     const ul = document.getElementById('dbgLog');
-    if (!ul || document.getElementById('debug').hidden) return;
+    if (!ul) return;
     const li = document.createElement('li');
     li.innerHTML = `<span class="t">${t}</span><span class="${kind}">${esc(kind)}</span> ${esc(msg)}`;
     ul.appendChild(li);
-    while (ul.children.length > 300) ul.firstChild.remove();
+    while (ul.children.length > 400) ul.firstChild.remove();
     ul.scrollTop = ul.scrollHeight;
   }
   const esc = (s) => String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
