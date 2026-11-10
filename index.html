@@ -1,0 +1,949 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1C2430">
+<title>歩きスライド</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #E9EDF2; --panel: #FFFFFF; --ink: #1C2430; --muted: #5C6878; --line: #C9D1DB;
+    --caution: #FFC72C; --caution-ink: #1C2430; --danger: #D9261C; --stage: #0E141C;
+    color-scheme: light;
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #141A22; --panel: #1C2430; --ink: #F2F5F8; --muted: #9AA6B6; --line: #2F3A48;
+      --stage: #000000; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #141A22; --panel: #1C2430; --ink: #F2F5F8; --muted: #9AA6B6; --line: #2F3A48;
+    --stage: #000000; color-scheme: dark;
+  }
+  *, *::before, *::after { box-sizing: inherit; }
+  html { height: 100%; }
+  body {
+    margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+    font-family: "BIZ UDPGothic", "Hiragino Sans", "Noto Sans JP", "Yu Gothic", sans-serif;
+    display: flex; flex-direction: column; overflow: hidden; -webkit-tap-highlight-color: transparent;
+  }
+
+  .main { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  @media (orientation: landscape) { .main { flex-direction: row; } }
+
+  .slideArea {
+    position: relative; flex: 1 1 58%; min-height: 0; min-width: 0; background: var(--stage);
+    display: flex; align-items: center; justify-content: center; overflow: hidden; touch-action: pan-y;
+  }
+  #slide { display: block; background: #fff; }
+  .slideEmpty { color: #B9C3D0; text-align: center; padding: 1rem; line-height: 1.7; font-size: .95rem; }
+  .pageNo {
+    position: absolute; right: .5rem; bottom: .5rem; background: rgba(14,20,28,.75); color: #F2F5F8;
+    border-radius: 999px; padding: .25rem .7rem; font-size: .85rem; font-weight: 700;
+  }
+  .flash {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    font-size: 3rem; font-weight: 700; color: #fff; text-shadow: 0 2px 10px rgba(0,0,0,.6);
+    pointer-events: none; opacity: 0; transition: opacity .25s;
+  }
+  .flash.show { opacity: 1; transition: none; }
+
+  .camArea {
+    position: relative; flex: 1 1 42%; min-height: 0; min-width: 0; background: var(--stage);
+    display: flex; align-items: center; justify-content: center; overflow: hidden;
+    border-top: 3px solid var(--caution);
+  }
+  @media (orientation: landscape) { .camArea { border-top: 0; border-left: 3px solid var(--caution); flex-basis: 36%; } }
+  #view { width: 100%; height: 100%; object-fit: contain; display: block; }
+  video.hiddenVideo { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+  .camIdle { position: absolute; color: #B9C3D0; font-size: .9rem; text-align: center; padding: 1rem; }
+
+  .chips { position: absolute; left: .4rem; top: .4rem; display: flex; gap: .3rem; flex-wrap: wrap; }
+  .chip {
+    background: rgba(14,20,28,.75); color: #F2F5F8; border-radius: 999px; padding: .25rem .6rem;
+    font-size: .75rem; line-height: 1.2;
+  }
+  .chip.hot { background: var(--caution); color: var(--caution-ink); font-weight: 700; }
+  .meter { display: inline-flex; align-items: center; gap: .25rem; }
+  .meter i { display: inline-block; width: 2.4rem; height: .45rem; background: rgba(255,255,255,.25); border-radius: 2px; overflow: hidden; position: relative; }
+  .meter i b { position: absolute; inset: 0 auto 0 0; background: var(--caution); width: 0; }
+
+  body.danger .main { outline: 6px solid var(--danger); outline-offset: -6px; }
+  .banner {
+    position: fixed; z-index: 30; left: 0; right: 0; top: env(safe-area-inset-top, 0px);
+    padding: .9rem 1rem; display: none; background: var(--danger); color: #fff;
+    font-weight: 700; font-size: 1.3rem; line-height: 1.3;
+    border-bottom: .5rem solid transparent;
+    border-image: repeating-linear-gradient(-45deg, var(--caution) 0 12px, #1C2430 12px 24px) 8;
+  }
+  .banner.on { display: block; animation: pulse .8s ease-in-out infinite alternate; }
+  @keyframes pulse { from { opacity: 1; } to { opacity: .82; } }
+  @media (prefers-reduced-motion: reduce) { .banner.on { animation: none; } }
+
+  .bar {
+    flex: 0 0 auto; display: grid; grid-template-columns: repeat(5, 1fr); gap: .35rem;
+    padding: .45rem; background: var(--panel); border-top: 1px solid var(--line);
+  }
+  button {
+    font: inherit; font-size: .75rem; font-weight: 700; line-height: 1.2;
+    border: 1.5px solid var(--line); background: var(--bg); color: var(--ink);
+    border-radius: 10px; padding: .45rem .2rem; min-height: 3.3rem; cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .15rem;
+  }
+  button .ico { font-size: 1.25rem; line-height: 1; }
+  button:disabled { opacity: .45; }
+  button.on { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+  button.primary { background: var(--caution); border-color: var(--caution); color: var(--caution-ink); }
+  button:focus-visible, select:focus-visible, input:focus-visible { outline: 3px solid var(--caution); outline-offset: 2px; }
+
+  .heard {
+    position: absolute; left: .4rem; right: .4rem; bottom: .4rem; font-size: .8rem; line-height: 1.4;
+    color: #F2F5F8; background: rgba(14,20,28,.7); border-left: 3px solid var(--caution);
+    padding: .3rem .5rem; border-radius: 4px; display: none;
+  }
+  .heard.show { display: block; }
+
+  .aiCard {
+    position: fixed; z-index: 25; left: .5rem; right: .5rem;
+    bottom: calc(4.6rem + env(safe-area-inset-bottom, 0px));
+    background: var(--panel); color: var(--ink); border: 2px solid var(--caution); border-radius: 12px;
+    padding: .8rem .9rem; font-size: .95rem; line-height: 1.7; box-shadow: 0 6px 24px rgba(0,0,0,.35);
+  }
+  .aiCard small { display: block; color: var(--muted); font-size: .75rem; margin-top: .3rem; }
+
+  .sheet {
+    position: fixed; z-index: 40; inset: 0; background: var(--panel); color: var(--ink);
+    overflow-y: auto; padding: calc(1rem + env(safe-area-inset-top, 0px)) 1rem calc(1.5rem + env(safe-area-inset-bottom, 0px));
+  }
+  .sheet[hidden], .aiCard[hidden] { display: none; }
+  .sheetInner { max-width: 34rem; margin: 0 auto; display: grid; gap: 1.1rem; }
+  .sheet h1 { margin: 0; font-size: 1.5rem; line-height: 1.3; }
+  .stripe { width: 7rem; height: .55rem; border-radius: 2px;
+    background: repeating-linear-gradient(-45deg, var(--caution) 0 10px, #1C2430 10px 20px); }
+  .sheet h2 { margin: 0 0 .5rem; font-size: 1rem; }
+  .sheet section { border-top: 1px solid var(--line); padding-top: .9rem; }
+  .sheet p, .help { margin: 0; color: var(--muted); font-size: .85rem; line-height: 1.75; }
+  .field { display: grid; gap: .35rem; font-size: .88rem; margin-top: .6rem; }
+  .row { display: flex; gap: .5rem; align-items: center; }
+  .row > input[type=text], .row > input[type=password] { flex: 1; }
+  input[type=text], input[type=password], select {
+    font: inherit; font-size: 1rem; padding: .55rem; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--ink); width: 100%; min-width: 0;
+  }
+  input[type=file] { font: inherit; font-size: .85rem; max-width: 100%; }
+  input[type=range] { width: 100%; }
+  .sheet button { min-height: 2.8rem; font-size: .9rem; flex-direction: row; padding: .5rem .9rem; }
+  .bigStart { width: 100%; min-height: 3.6rem !important; font-size: 1.1rem !important; }
+  .status { font-size: .85rem; line-height: 1.6; min-height: 1.4em; }
+  .warn { color: var(--danger); font-weight: 700; }
+  .checks { display: grid; gap: .5rem; margin-top: .6rem; font-size: .88rem; }
+</style>
+</head>
+<body>
+
+<div class="banner" id="banner" role="alert"></div>
+
+<div class="main">
+  <section class="slideArea" id="slideArea">
+    <canvas id="slide" hidden></canvas>
+    <div class="slideEmpty" id="slideEmpty">スライドがまだありません。<br>下の「スライド」から読み込んでください。</div>
+    <div class="flash" id="flash"></div>
+    <div class="pageNo" id="pageNo" hidden></div>
+  </section>
+
+  <section class="camArea">
+    <canvas id="view" aria-label="外カメラの映像と検出結果"></canvas>
+    <div class="camIdle" id="camIdle">外カメラは「開始」で起動します</div>
+    <video id="rear" class="hiddenVideo" playsinline muted></video>
+    <video id="front" class="hiddenVideo" playsinline muted></video>
+    <div class="chips">
+      <span class="chip" id="chipStatus">停止中</span>
+      <span class="chip" id="chipFps" hidden></span>
+      <span class="chip" id="chipMic" hidden>🎤 待機中</span>
+      <span class="chip" id="chipLip" hidden>
+        <span class="meter">👄 あ<i><b id="mJaw"></b></i> う<i><b id="mPuck"></b></i></span>
+      </span>
+    </div>
+    <div class="heard" id="heard"></div>
+  </section>
+</div>
+
+<nav class="bar">
+  <button id="btnMic" disabled><span class="ico">🎤</span><span>音声</span></button>
+  <button id="btnLip" disabled><span class="ico">👄</span><span>口パク</span></button>
+  <button id="btnAI" disabled><span class="ico">👀</span><span>AIで確認</span></button>
+  <button id="btnPrev" disabled><span class="ico">◀</span><span>前へ</span></button>
+  <button id="btnMenu"><span class="ico">☰</span><span>メニュー</span></button>
+</nav>
+
+<div class="aiCard" id="aiCard" hidden role="status"></div>
+
+<div class="sheet" id="sheet">
+  <div class="sheetInner">
+    <div class="stripe" aria-hidden="true"></div>
+    <h1>歩きスライド</h1>
+    <p>スライドを声や口の形でめくりながら、外カメラで前方の危険を見張ります。</p>
+
+    <section>
+      <h2>スライドを読み込む</h2>
+      <p>Googleスライドは「ファイル → ダウンロード → PDF」、PowerPointは「名前を付けて保存 → PDF」で書き出したファイルを選んでください。</p>
+      <div class="field">
+        <input type="file" id="pdfFile" accept="application/pdf,.pdf">
+      </div>
+      <div class="field">GoogleスライドのURLから読み込む（共有設定を「リンクを知っている全員」にしたもの）
+        <div class="row">
+          <input type="text" id="gUrl" placeholder="https://docs.google.com/presentation/d/…" inputmode="url" autocomplete="off">
+          <button id="btnGLoad">読み込む</button>
+        </div>
+      </div>
+      <div class="status" id="slideStatus"></div>
+    </section>
+
+    <section>
+      <h2>開始</h2>
+      <div class="status" id="startStatus">検出AI（YOLO）を読み込んでいます…初回は数十MBのダウンロードがあるので、Wi-Fiだと早いです。</div>
+      <div class="field"><button id="btnStart" class="primary bigStart" disabled>開始する</button></div>
+    </section>
+
+    <section>
+      <h2>AIで確認の合言葉</h2>
+      <p>サーバーに設定した合言葉（APP_PASSCODE）を入力します。この端末に保存されます。</p>
+      <div class="field"><input type="password" id="passcode" autocomplete="off" placeholder="合言葉"></div>
+    </section>
+
+    <section>
+      <h2>警告の設定</h2>
+      <label class="field">警告する対象
+        <select id="mode">
+          <option value="person">人だけ</option>
+          <option value="traffic" selected>人・車・自転車・バイク・犬</option>
+          <option value="all">検出できるものすべて</option>
+        </select>
+      </label>
+      <label class="field">検出AI
+        <select id="detModel">
+          <option value="yolo11s" selected>高精度（YOLO11s）</option>
+          <option value="yolo11n">軽量・高速（YOLO11n）</option>
+        </select>
+      </label>
+      <label class="field">検出の確信度：<b id="scoreVal">60</b>% 以上（上げると誤検出が減ります）
+        <input type="range" id="score" min="40" max="90" step="5" value="60">
+      </label>
+      <label class="field">「近い」と判断する大きさ：画面の <b id="thrVal">30</b>% 以上
+        <input type="range" id="thr" min="10" max="80" step="5" value="30">
+      </label>
+      <label class="field">口パクの感度：<b id="lipVal">1.0</b>
+        <input type="range" id="lipSens" min="0.6" max="1.6" step="0.1" value="1.0">
+      </label>
+      <div class="checks">
+        <label class="row"><input type="checkbox" id="optVoice" checked>危険を音声で知らせる</label>
+        <label class="row"><input type="checkbox" id="optBeep" checked>警告音を鳴らす</label>
+        <label class="row"><input type="checkbox" id="optVibe" checked>振動させる（Android）</label>
+      </div>
+    </section>
+
+    <section>
+      <h2>操作のしかた</h2>
+      <p class="help">
+        声：「次」「前」「5枚目」「最初」「最後」でスライドを移動。<br>
+        「周りを確認」…端末のAIが見えているものを読み上げ。<br>
+        「詳しく確認」…外カメラの画像をAIに送り、段差や信号まで説明。<br>
+        「質問、信号は何色？」…「質問」に続けて自由に聞けます。<br>
+        「止めて」「再開」…危険検出の一時停止。「静かに」「音声オン」…読み上げの切り替え。<br>
+        口パク：口を「あ」の形に大きく開けて約0.5秒 → 次へ。口を「う」の形にすぼめて約0.5秒 → 前へ。<br>
+        指：スライドを左右にスワイプ、または右側をタップで次へ、左側をタップで前へ。<br>
+        口パクは内カメラを使います。前後のカメラを同時に使えない端末では、外カメラを優先して口パクを止めます。
+      </p>
+    </section>
+
+    <div class="field"><button id="btnClose" hidden>閉じる</button></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.webgpu.min.js"></script>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+  // ================= 共通 =================
+  const ui = {
+    banner: $('banner'), slideArea: $('slideArea'), slide: $('slide'), slideEmpty: $('slideEmpty'),
+    flash: $('flash'), pageNo: $('pageNo'), view: $('view'), camIdle: $('camIdle'),
+    rear: $('rear'), front: $('front'), chipStatus: $('chipStatus'), chipMic: $('chipMic'), chipFps: $('chipFps'),
+    chipLip: $('chipLip'), mJaw: $('mJaw'), mPuck: $('mPuck'), heard: $('heard'),
+    btnMic: $('btnMic'), btnLip: $('btnLip'), btnAI: $('btnAI'), btnPrev: $('btnPrev'), btnMenu: $('btnMenu'),
+    aiCard: $('aiCard'), sheet: $('sheet'), pdfFile: $('pdfFile'), gUrl: $('gUrl'), btnGLoad: $('btnGLoad'),
+    slideStatus: $('slideStatus'), startStatus: $('startStatus'), btnStart: $('btnStart'), btnClose: $('btnClose'),
+    passcode: $('passcode'), mode: $('mode'), thr: $('thr'), thrVal: $('thrVal'),
+    lipSens: $('lipSens'), detModel: $('detModel'), score: $('score'), scoreVal: $('scoreVal'), lipVal: $('lipVal'), optVoice: $('optVoice'), optBeep: $('optBeep'), optVibe: $('optVibe'),
+  };
+
+  const store = {
+    get(k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
+  };
+  ui.passcode.value = store.get('walkslides-passcode');
+  ui.passcode.addEventListener('change', () => store.set('walkslides-passcode', ui.passcode.value.trim()));
+  ui.thr.addEventListener('input', () => { ui.thrVal.textContent = ui.thr.value; });
+  ui.score.addEventListener('input', () => {
+    ui.scoreVal.textContent = ui.score.value;
+  });
+  ui.detModel.value = store.get('walkslides-detmodel') === 'yolo11n' ? 'yolo11n' : 'yolo11s';
+  ui.detModel.addEventListener('change', async () => {
+    store.set('walkslides-detmodel', ui.detModel.value);
+    showHeard('検出AIを切り替えています…', 8000);
+    try { await loadDetector(); showHeard('検出AIを切り替えました'); }
+    catch (e) { showHeard('<span class="warn">検出AIを切り替えられませんでした</span>'); }
+  });
+  ui.lipSens.addEventListener('input', () => { ui.lipVal.textContent = Number(ui.lipSens.value).toFixed(1); });
+
+  let heardTimer = 0;
+  function showHeard(html, ms = 3500) {
+    ui.heard.innerHTML = html; ui.heard.classList.add('show');
+    clearTimeout(heardTimer); heardTimer = setTimeout(() => ui.heard.classList.remove('show'), ms);
+  }
+  const esc = (s) => String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+
+  // ================= スライド =================
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  let pdfDoc = null, pageNum = 1, renderTask = null, renderToken = 0;
+
+  async function loadPdf(data, label) {
+    try {
+      ui.slideStatus.textContent = '読み込み中…';
+      pdfDoc = await pdfjsLib.getDocument({ data }).promise;
+      pageNum = 1;
+      ui.slide.hidden = false; ui.slideEmpty.hidden = true; ui.pageNo.hidden = false;
+      ui.btnPrev.disabled = false;
+      ui.slideStatus.textContent = `${label}（${pdfDoc.numPages}枚）を読み込みました`;
+      await renderPage();
+    } catch (e) {
+      console.error(e);
+      ui.slideStatus.innerHTML = '<span class="warn">PDFを開けませんでした。</span>別のファイルで試してください。';
+    }
+  }
+
+  async function renderPage() {
+    if (!pdfDoc) return;
+    const token = ++renderToken;
+    const page = await pdfDoc.getPage(pageNum);
+    if (token !== renderToken) return;
+    const box = ui.slideArea.getBoundingClientRect();
+    const base = page.getViewport({ scale: 1 });
+    const fit = Math.min(box.width / base.width, box.height / base.height);
+    const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+    const vp = page.getViewport({ scale: fit * dpr });
+    const c = ui.slide;
+    if (renderTask) { try { renderTask.cancel(); } catch (e) {} }
+    c.width = Math.floor(vp.width); c.height = Math.floor(vp.height);
+    c.style.width = Math.floor(vp.width / dpr) + 'px';
+    c.style.height = Math.floor(vp.height / dpr) + 'px';
+    renderTask = page.render({ canvasContext: c.getContext('2d'), viewport: vp });
+    try { await renderTask.promise; } catch (e) { /* 次のページ描画で中断された */ }
+    ui.pageNo.textContent = `${pageNum} / ${pdfDoc.numPages}`;
+  }
+
+  let flashTimer = 0;
+  function flash(text) {
+    ui.flash.textContent = text; ui.flash.classList.add('show');
+    clearTimeout(flashTimer); flashTimer = setTimeout(() => ui.flash.classList.remove('show'), 450);
+  }
+
+  function goTo(n, how = '') {
+    if (!pdfDoc) { showHeard('スライドがまだ読み込まれていません'); return; }
+    const target = Math.max(1, Math.min(pdfDoc.numPages, n));
+    if (target === pageNum) { flash(target === 1 ? '最初です' : '最後です'); return; }
+    pageNum = target;
+    flash(`${how}${pageNum} / ${pdfDoc.numPages}`);
+    renderPage();
+  }
+  const next = (how) => goTo(pageNum + 1, how);
+  const prev = (how) => goTo(pageNum - 1, how);
+
+  ui.pdfFile.addEventListener('change', async () => {
+    const f = ui.pdfFile.files[0];
+    if (f) loadPdf(new Uint8Array(await f.arrayBuffer()), f.name);
+  });
+
+  ui.btnGLoad.addEventListener('click', async () => {
+    const v = ui.gUrl.value.trim();
+    const m = v.match(/\/presentation\/d\/([A-Za-z0-9_-]+)/) || v.match(/^([A-Za-z0-9_-]{20,128})$/);
+    if (!m) { ui.slideStatus.innerHTML = '<span class="warn">GoogleスライドのURLを貼り付けてください。</span>'; return; }
+    ui.slideStatus.textContent = 'Googleスライドを取得中…';
+    try {
+      const r = await fetch(`/api/slides?id=${encodeURIComponent(m[1])}`);
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        throw new Error(d.error || 'スライドを取得できませんでした');
+      }
+      loadPdf(new Uint8Array(await r.arrayBuffer()), 'Googleスライド');
+    } catch (e) {
+      ui.slideStatus.innerHTML = `<span class="warn">${esc(e.message)}</span>`;
+    }
+  });
+
+  // タップとスワイプ
+  let touchX = null, touchY = null;
+  ui.slideArea.addEventListener('touchstart', (e) => { touchX = e.touches[0].clientX; touchY = e.touches[0].clientY; }, { passive: true });
+  ui.slideArea.addEventListener('touchend', (e) => {
+    if (touchX === null) return;
+    const dx = e.changedTouches[0].clientX - touchX, dy = e.changedTouches[0].clientY - touchY;
+    touchX = null;
+    if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) { dx < 0 ? next() : prev(); }
+    else if (Math.abs(dx) < 10 && Math.abs(dy) < 10) {
+      const box = ui.slideArea.getBoundingClientRect();
+      (e.changedTouches[0].clientX - box.left) > box.width / 2 ? next() : prev();
+    }
+    e.preventDefault();
+  });
+  ui.slideArea.addEventListener('click', (e) => {   // PCでの確認用
+    if (e.pointerType === 'touch') return;
+    const box = ui.slideArea.getBoundingClientRect();
+    (e.clientX - box.left) > box.width / 2 ? next() : prev();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT') return;
+    if (['ArrowRight', 'PageDown', ' '].includes(e.key)) next();
+    if (['ArrowLeft', 'PageUp'].includes(e.key)) prev();
+  });
+  ui.btnPrev.addEventListener('click', () => prev());
+  let resizeTimer = 0;
+  window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(renderPage, 200); });
+
+  // ================= 読み上げと警告音 =================
+  let jaVoice = null, speaking = false, audioCtx = null;
+  function pickVoice() {
+    const vs = speechSynthesis.getVoices();
+    jaVoice = vs.find(v => v.lang === 'ja-JP' && /Google|Kyoko|O-ren/i.test(v.name)) ||
+              vs.find(v => v.lang && v.lang.startsWith('ja')) || null;
+  }
+  if ('speechSynthesis' in window) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
+
+  function say(text) {
+    if (!('speechSynthesis' in window)) return;
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'ja-JP'; u.rate = 1.15;
+    if (jaVoice) u.voice = jaVoice;
+    u.onstart = () => { speaking = true; pauseRecognition(); };
+    u.onend = u.onerror = () => { speaking = false; resumeRecognitionSoon(); };
+    speechSynthesis.speak(u);
+  }
+
+  function beep() {
+    if (!audioCtx || !ui.optBeep.checked) return;
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.type = 'square'; o.frequency.value = 880;
+    g.gain.setValueAtTime(0.15, audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.25);
+    o.connect(g).connect(audioCtx.destination);
+    o.start(); o.stop(audioCtx.currentTime + 0.26);
+  }
+
+  // ================= 外カメラの危険検出 =================
+  const JA = {
+    person:'人', bicycle:'自転車', car:'車', motorcycle:'バイク', bus:'バス', train:'電車', truck:'トラック',
+    'traffic light':'信号機', 'fire hydrant':'消火栓', 'stop sign':'一時停止標識', bench:'ベンチ',
+    bird:'鳥', cat:'猫', dog:'犬', horse:'馬', backpack:'リュック', umbrella:'傘', handbag:'バッグ',
+    suitcase:'スーツケース', 'sports ball':'ボール', skateboard:'スケートボード', bottle:'ボトル',
+    cup:'コップ', chair:'椅子', couch:'ソファ', 'potted plant':'植木鉢', bed:'ベッド', 'dining table':'テーブル',
+    toilet:'トイレ', tv:'テレビ', laptop:'ノートパソコン', 'cell phone':'スマホ', book:'本', clock:'時計',
+  };
+  const ja = (c) => JA[c] || c;
+  const MODES = {
+    person: new Set(['person']),
+    traffic: new Set(['person', 'bicycle', 'car', 'motorcycle', 'bus', 'truck', 'dog']),
+    all: null,
+  };
+  const COLORS = { person:'#FFC72C', car:'#4FC3F7', truck:'#4FC3F7', bus:'#4FC3F7',
+                   bicycle:'#A5D6A7', motorcycle:'#A5D6A7', dog:'#CE93D8' };
+
+  const MP = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14';
+  let mpCache = null;
+  function mediapipe() {
+    if (!mpCache) mpCache = (async () => {
+      const vision = await import(`${MP}/vision_bundle.mjs`);
+      const files = await vision.FilesetResolver.forVisionTasks(`${MP}/wasm`);
+      return { vision, files };
+    })();
+    return mpCache;
+  }
+
+  // ---------- YOLO11（ONNX Runtime Web、WebGPU → 使えなければ WASM） ----------
+  const ORT_DIST = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/';
+  const COCO = ["person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat", "traffic light", "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee", "skis", "snowboard", "sports ball", "kite", "baseball bat", "baseball glove", "skateboard", "surfboard", "tennis racket", "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", "apple", "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair", "couch", "potted plant", "bed", "dining table", "toilet", "tv", "laptop", "mouse", "remote", "keyboard", "cell phone", "microwave", "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase", "scissors", "teddy bear", "hair drier", "toothbrush"];
+// YOLO11 の出力 [1, 84, 8400] を検出結果に変換する（ブラウザと同じ処理）
+function decodeYolo(out, names, scoreThr, lb, iouThr = 0.45) {
+  const N = 8400, C = names.length, boxes = [];
+  for (let i = 0; i < N; i++) {
+    let best = 0, cls = -1;
+    for (let c = 0; c < C; c++) {
+      const v = out[(4 + c) * N + i];
+      if (v > best) { best = v; cls = c; }
+    }
+    if (best < scoreThr) continue;
+    const cx = out[i], cy = out[N + i], w = out[2 * N + i], h = out[3 * N + i];
+    const x = (cx - w / 2 - lb.padX) / lb.scale, y = (cy - h / 2 - lb.padY) / lb.scale;
+    boxes.push({ cls, score: best, x, y, w: w / lb.scale, h: h / lb.scale });
+  }
+  boxes.sort((a, b) => b.score - a.score);
+  const keep = [];
+  const iou = (a, b) => {
+    const x1 = Math.max(a.x, b.x), y1 = Math.max(a.y, b.y);
+    const x2 = Math.min(a.x + a.w, b.x + b.w), y2 = Math.min(a.y + a.h, b.y + b.h);
+    const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+    return inter / (a.w * a.h + b.w * b.h - inter + 1e-6);
+  };
+  for (const b of boxes) {
+    if (keep.every(k => k.cls !== b.cls || iou(k, b) < iouThr)) keep.push(b);
+    if (keep.length >= 30) break;
+  }
+  return keep.map(b => ({
+    class: names[b.cls], score: b.score,
+    bbox: [Math.max(0, b.x), Math.max(0, b.y), b.w, b.h],
+  }));
+}
+
+  const YOLO_SIZE = 640;
+  const yoloCanvas = document.createElement('canvas');
+  yoloCanvas.width = yoloCanvas.height = YOLO_SIZE;
+  const yctx = yoloCanvas.getContext('2d', { willReadFrequently: true });
+  const yoloInput = new Float32Array(3 * YOLO_SIZE * YOLO_SIZE);
+  let detectorBackend = '';
+
+  async function loadDetector() {
+    ort.env.wasm.wasmPaths = ORT_DIST;
+    ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency || 2) : 1;
+    const url = `models/${ui.detModel.value}.onnx`;
+    let session = null, backend = '';
+    if ('gpu' in navigator) {
+      try { session = await ort.InferenceSession.create(url, { executionProviders: ['webgpu'] }); backend = 'WebGPU'; }
+      catch (e) { console.warn('WebGPU不可', e); }
+    }
+    if (!session) { session = await ort.InferenceSession.create(url, { executionProviders: ['wasm'] }); backend = 'CPU'; }
+    const old = detector;
+    detector = session; detectorBackend = backend; preds = []; dangerStreak = 0;
+    if (old) { try { old.release(); } catch (e) {} }
+  }
+
+  async function runYolo(v) {
+    const W = v.videoWidth, H = v.videoHeight;
+    const scale = Math.min(YOLO_SIZE / W, YOLO_SIZE / H);
+    const nw = Math.round(W * scale), nh = Math.round(H * scale);
+    const padX = Math.floor((YOLO_SIZE - nw) / 2), padY = Math.floor((YOLO_SIZE - nh) / 2);
+    yctx.fillStyle = 'rgb(114,114,114)';
+    yctx.fillRect(0, 0, YOLO_SIZE, YOLO_SIZE);
+    yctx.drawImage(v, padX, padY, nw, nh);
+    const px = yctx.getImageData(0, 0, YOLO_SIZE, YOLO_SIZE).data;
+    const area = YOLO_SIZE * YOLO_SIZE;
+    for (let i = 0, j = 0; i < area; i++, j += 4) {
+      yoloInput[i] = px[j] / 255;
+      yoloInput[i + area] = px[j + 1] / 255;
+      yoloInput[i + 2 * area] = px[j + 2] / 255;
+    }
+    const input = new ort.Tensor('float32', yoloInput, [1, 3, YOLO_SIZE, YOLO_SIZE]);
+    const out = await detector.run({ [detector.inputNames[0]]: input });
+    const data = out[detector.outputNames[0]].data;
+    return decodeYolo(data, COCO, ui.score.value / 100, { scale, padX, padY });
+  }
+
+  const view = ui.view, vctx = view.getContext('2d');
+  let detector = null, rearStream = null, running = false, paused = false, busy = false, lastDetect = 0;
+  let frames = 0, fpsT = 0;
+  let preds = [], wasDanger = false, dangerStreak = 0, lastAlert = 0, wakeLock = null;
+
+  const sizeRatio = (p) => Math.max(p.bbox[2] / view.width, p.bbox[3] / view.height);
+  function where(p) {
+    const cx = (p.bbox[0] + p.bbox[2] / 2) / view.width;
+    return cx < 0.33 ? '左' : cx > 0.67 ? '右' : '正面';
+  }
+  function distance(p) {
+    const r = sizeRatio(p), t = ui.thr.value / 100;
+    return r >= t ? '近く' : r >= t * 0.5 ? 'やや近く' : '遠く';
+  }
+
+  async function startRear() {
+    if (rearStream) rearStream.getTracks().forEach(t => t.stop());
+    rearStream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 }, height: { ideal: 480 } },
+    });
+    ui.rear.srcObject = rearStream;
+    await ui.rear.play();
+  }
+
+  function camLoop() {
+    if (!running) return;
+    requestAnimationFrame(camLoop);
+    const v = ui.rear;
+    if (v.readyState < 2) return;
+    if (view.width !== v.videoWidth || view.height !== v.videoHeight) {
+      view.width = v.videoWidth; view.height = v.videoHeight;
+    }
+    vctx.drawImage(v, 0, 0, view.width, view.height);
+    drawBoxes();
+    const now = performance.now();
+    if (!paused && detector && !busy && now - lastDetect > 80) {
+      busy = true; lastDetect = now;
+      runYolo(v)
+        .then(p => { if (!paused) { preds = p; evaluate(); } frames++; })
+        .catch(e => console.warn(e))
+        .finally(() => { busy = false; });
+    }
+    if (now - fpsT > 1000) {
+      ui.chipFps.textContent = `${detectorBackend} ${frames}回/秒`;
+      ui.chipFps.hidden = !running;
+      frames = 0; fpsT = now;
+    }
+  }
+
+  function drawBoxes() {
+    if (paused) return;
+    const lw = Math.max(2, view.width / 220), fs = Math.max(14, Math.round(view.width / 28));
+    vctx.font = `700 ${fs}px "BIZ UDPGothic", sans-serif`;
+    vctx.textBaseline = 'top';
+    const targets = MODES[ui.mode.value], t = ui.thr.value / 100;
+    for (const p of preds) {
+      const [x, y, w, h] = p.bbox;
+      const near = dangerStreak >= CONFIRM && (!targets || targets.has(p.class)) && sizeRatio(p) >= t;
+      const col = near ? '#D9261C' : (COLORS[p.class] || '#FFFFFF');
+      vctx.lineWidth = near ? lw * 2 : lw; vctx.strokeStyle = col;
+      vctx.strokeRect(x, y, w, h);
+      const label = `${ja(p.class)} ${Math.round(p.score * 100)}%`;
+      const tw = vctx.measureText(label).width + 10, ly = y - fs - 8 < 0 ? y : y - fs - 8;
+      vctx.fillStyle = col; vctx.fillRect(x, ly, tw, fs + 8);
+      vctx.fillStyle = near ? '#FFFFFF' : '#1C2430'; vctx.fillText(label, x + 5, ly + 4);
+    }
+  }
+
+  const CONFIRM = 3;   // 約0.3秒連続で検出されたら危険と判断
+
+  function evaluate() {
+    const targets = MODES[ui.mode.value], t = ui.thr.value / 100;
+    const danger = preds.filter(p => (!targets || targets.has(p.class)) && sizeRatio(p) >= t)
+                        .sort((a, b) => sizeRatio(b) - sizeRatio(a));
+    // 一瞬の誤検出で鳴らないよう、連続して検出されたときだけ警告する
+    dangerStreak = danger.length ? dangerStreak + 1 : 0;
+    const isDanger = dangerStreak >= CONFIRM;
+    document.body.classList.toggle('danger', isDanger);
+    if (isDanger) {
+      const top = danger[0];
+      const text = `危険：${where(top)}に${ja(top.class)}が近づいています`;
+      ui.banner.textContent = danger.length > 1 ? `${text}（ほか${danger.length - 1}件）` : text;
+      ui.banner.classList.add('on');
+      const now = performance.now();
+      if (!wasDanger || now - lastAlert > 4000) {
+        lastAlert = now;
+        beep();
+        if (ui.optVibe.checked && navigator.vibrate) navigator.vibrate([200, 100, 200]);
+        if (ui.optVoice.checked) say(`注意。${where(top)}に${ja(top.class)}`);
+      }
+    } else {
+      ui.banner.classList.remove('on');
+    }
+    wasDanger = isDanger;
+  }
+
+  function describeLocal() {
+    if (!running) { say('まだカメラが起動していません'); return; }
+    if (paused) { say('危険検出を一時停止しています'); return; }
+    if (!preds.length) { say('いまは何も見つかりません'); return; }
+    const sorted = [...preds].sort((a, b) => sizeRatio(b) - sizeRatio(a)).slice(0, 5);
+    const rest = preds.length - sorted.length;
+    say(sorted.map(p => `${where(p)}の${distance(p)}に${ja(p.class)}`).join('、') +
+        (rest > 0 ? `、ほか${rest}件` : '') + 'があります');
+  }
+
+  function setStatus() {
+    ui.chipStatus.textContent = !running ? '停止中' : paused ? '検出 一時停止' : '見張り中';
+    ui.chipStatus.classList.toggle('hot', running && !paused);
+  }
+
+  async function requestWakeLock() {
+    try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && running) requestWakeLock();
+  });
+
+  // ================= AIで確認（サーバー経由） =================
+  let aiBusy = false, aiTimer = 0;
+  function showAI(html, keep = false) {
+    ui.aiCard.innerHTML = html; ui.aiCard.hidden = false;
+    clearTimeout(aiTimer);
+    if (!keep) aiTimer = setTimeout(() => { ui.aiCard.hidden = true; }, 15000);
+  }
+  ui.aiCard.addEventListener('click', () => { ui.aiCard.hidden = true; });
+
+  async function askAI(question) {
+    if (!running || ui.rear.readyState < 2) { say('先にカメラを開始してください'); return; }
+    if (aiBusy) return;
+    aiBusy = true; ui.btnAI.disabled = true;
+    showAI('AIが前方を確認しています…', true);
+    try {
+      const v = ui.rear, scale = Math.min(1, 768 / Math.max(v.videoWidth, v.videoHeight));
+      const c = document.createElement('canvas');
+      c.width = Math.round(v.videoWidth * scale); c.height = Math.round(v.videoHeight * scale);
+      c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+      const image = c.toDataURL('image/jpeg', 0.75).split(',')[1];
+      const detections = preds.map(p => `${where(p)}の${distance(p)}に${ja(p.class)}`);
+      const r = await fetch('/api/describe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-app-passcode': ui.passcode.value.trim() },
+        body: JSON.stringify({ image, question, detections }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || 'AIに確認できませんでした');
+      showAI(`${esc(d.text)}<small>${question ? '質問：' + esc(question) : 'AIによる前方の確認'}（タップで閉じる）</small>`);
+      say(d.text);
+    } catch (e) {
+      showAI(`<span class="warn">${esc(e.message)}</span>`);
+      say('AIに確認できませんでした');
+    } finally {
+      aiBusy = false; ui.btnAI.disabled = false;
+    }
+  }
+  ui.btnAI.addEventListener('click', () => askAI(''));
+
+  // ================= 音声入力 =================
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let rec = null, wantListen = false, recActive = false;
+
+  if (SR) {
+    rec = new SR();
+    rec.lang = 'ja-JP'; rec.continuous = true; rec.interimResults = true;
+    rec.onstart = () => { recActive = true; updateMic(); };
+    rec.onend = () => { recActive = false; updateMic(); resumeRecognitionSoon(); };
+    rec.onerror = (e) => {
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        wantListen = false; updateMic();
+        showHeard('<span class="warn">マイクを使えません。</span>ブラウザの設定でマイクを許可してください。', 6000);
+      }
+    };
+    rec.onresult = (e) => {
+      let interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const text = e.results[i][0].transcript.trim();
+        if (e.results[i].isFinal) { if (text) handleCommand(text); }
+        else interim += text;
+      }
+      if (interim) showHeard(`🎤 ${esc(interim)}`);
+    };
+  }
+
+  function startRecognition() {
+    if (!rec || recActive || !wantListen || speaking) return;
+    try { rec.start(); } catch (e) {}
+  }
+  function pauseRecognition() { if (rec && recActive) { try { rec.abort(); } catch (e) {} } }
+  function resumeRecognitionSoon() { if (wantListen && !speaking) setTimeout(startRecognition, 350); }
+  function updateMic() {
+    ui.btnMic.classList.toggle('on', wantListen);
+    ui.chipMic.hidden = !wantListen;
+    ui.chipMic.classList.toggle('hot', wantListen && recActive);
+    ui.chipMic.textContent = wantListen && recActive ? '🎤 聞き取り中' : '🎤 待機中';
+  }
+  ui.btnMic.addEventListener('click', () => {
+    if (!rec) return;
+    wantListen = !wantListen;
+    wantListen ? startRecognition() : pauseRecognition();
+    updateMic();
+  });
+
+  function toNumber(s) {
+    s = s.replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+    if (/^\d+$/.test(s)) return Number(s);
+    const d = { '〇':0,'零':0,'一':1,'二':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9 };
+    let total = 0, cur = 0;
+    for (const ch of s) {
+      if (ch in d) cur = d[ch];
+      else if (ch === '十') { total += (cur || 1) * 10; cur = 0; }
+      else if (ch === '百') { total += (cur || 1) * 100; cur = 0; }
+    }
+    return total + cur;
+  }
+
+  function handleCommand(raw) {
+    const t = raw.replace(/\s/g, '');
+    const has = (...w) => w.some(x => t.includes(x));
+    showHeard(`🎤 <b>${esc(raw)}</b>`);
+
+    const qm = t.match(/質問[、,。]?(.+)/);
+    if (qm) return askAI(qm[1]);
+    if (has('詳しく', 'くわしく')) return askAI('');
+    if (has('周り', 'まわり', '何があ', 'なにがあ', '確認')) return describeLocal();
+
+    const pm = t.match(/([0-9０-９〇一二三四五六七八九十百]+)(枚目|まいめ|ページ|番目)/) ||
+               t.match(/スライド([0-9０-９〇一二三四五六七八九十百]+)/);
+    if (pm) { const n = toNumber(pm[1]); if (n > 0) return goTo(n, '🎤 '); }
+    if (has('最初', 'さいしょ', '一番前')) return goTo(1, '🎤 ');
+    if (has('最後', 'さいご')) return goTo(pdfDoc ? pdfDoc.numPages : 1, '🎤 ');
+    if (has('次', 'つぎ', 'ネクスト', '進', 'すすめ', 'めくって')) return next('🎤 ');
+    if (has('前', 'まえ', '戻', 'もど', 'バック')) return prev('🎤 ');
+
+    if (has('再開', 'さいかい')) { paused = false; setStatus(); return say('危険検出を再開します'); }
+    if (has('止め', 'とめ', '停止', 'ストップ')) {
+      paused = true; preds = []; dangerStreak = 0; ui.banner.classList.remove('on'); document.body.classList.remove('danger');
+      setStatus(); return say('危険検出を止めました');
+    }
+    if (has('静か', 'しずか', 'ミュート', '音声オフ')) { ui.optVoice.checked = false; return say('警告の読み上げをオフにしました'); }
+    if (has('音声オン', '読み上げオン')) { ui.optVoice.checked = true; return say('警告の読み上げをオンにしました'); }
+  }
+
+  // ================= 口パク（内カメラ） =================
+  const FACE_MODEL = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
+  let face = null, frontStream = null, lipOn = false, lastLip = 0;
+  const lip = { cand: null, since: 0, armed: true, last: 0 };
+
+  async function loadFace() {
+    const { vision: { FaceLandmarker }, files } = await mediapipe();
+    const opts = (delegate) => ({
+      baseOptions: { modelAssetPath: FACE_MODEL, delegate },
+      outputFaceBlendshapes: true, runningMode: 'VIDEO', numFaces: 1,
+    });
+    try { return await FaceLandmarker.createFromOptions(files, opts('GPU')); }
+    catch (e) { return await FaceLandmarker.createFromOptions(files, opts('CPU')); }
+  }
+
+  function stopFront() {
+    if (frontStream) frontStream.getTracks().forEach(t => t.stop());
+    frontStream = null;
+  }
+
+  async function enableLip() {
+    ui.btnLip.disabled = true;
+    showHeard('口パク機能を準備しています…', 8000);
+    try {
+      if (!face) face = await loadFace();
+      frontStream = await navigator.mediaDevices.getUserMedia({
+        audio: false, video: { facingMode: 'user', width: { ideal: 320 }, height: { ideal: 240 } },
+      });
+      ui.front.srcObject = frontStream;
+      await ui.front.play();
+
+      // 前後カメラを同時に使えるか確認（外カメラの映像が止まっていないか）
+      const t0 = ui.rear.currentTime;
+      await sleep(900);
+      const rearTrack = rearStream && rearStream.getVideoTracks()[0];
+      if (!rearTrack || rearTrack.readyState === 'ended' || ui.rear.currentTime === t0) {
+        stopFront();
+        await startRear();
+        showHeard('<span class="warn">この端末は前後のカメラを同時に使えません。</span>危険検出を優先し、口パクはオフにしました。声かタップで操作してください。', 8000);
+        say('この端末では口パクと危険検出を同時に使えません');
+        return;
+      }
+      lipOn = true;
+      ui.btnLip.classList.add('on'); ui.chipLip.hidden = false;
+      showHeard('口パク：「あ」で次へ、「う」で前へ');
+      lipLoop();
+    } catch (e) {
+      console.error(e);
+      stopFront();
+      showHeard('<span class="warn">口パク機能を起動できませんでした。</span>内カメラの使用を許可しているか確認してください。', 6000);
+    } finally {
+      ui.btnLip.disabled = false;
+    }
+  }
+
+  function disableLip() {
+    lipOn = false; stopFront();
+    ui.btnLip.classList.remove('on'); ui.chipLip.hidden = true;
+  }
+  ui.btnLip.addEventListener('click', () => (lipOn ? disableLip() : enableLip()));
+
+  function lipLoop() {
+    if (!lipOn) return;
+    requestAnimationFrame(lipLoop);
+    const now = performance.now();
+    if (now - lastLip < 66 || ui.front.readyState < 2) return;
+    lastLip = now;
+    let cats;
+    try { cats = face.detectForVideo(ui.front, now).faceBlendshapes?.[0]?.categories; } catch (e) { return; }
+    if (!cats) { ui.mJaw.style.width = ui.mPuck.style.width = '0'; lip.cand = null; lip.armed = true; return; }
+    const get = (n) => (cats.find(c => c.categoryName === n) || {}).score || 0;
+    const jaw = get('jawOpen'), puck = get('mouthPucker');
+    const s = Number(ui.lipSens.value);
+    const jawT = Math.min(0.9, 0.5 / s), puckT = Math.min(0.9, 0.55 / s);
+    ui.mJaw.style.width = Math.min(100, jaw / jawT * 100) + '%';
+    ui.mPuck.style.width = Math.min(100, puck / puckT * 100) + '%';
+
+    let cand = null;
+    if (jaw > jawT) cand = 'next';
+    else if (puck > puckT && jaw < 0.25) cand = 'prev';
+    if (cand !== lip.cand) { lip.cand = cand; lip.since = now; }
+    if (!cand) { lip.armed = true; return; }
+    // 話しているときの口の動きで誤作動しないよう、0.5秒保ったときだけ反応
+    if (lip.armed && now - lip.since >= 500 && now - lip.last > 1000) {
+      lip.armed = false; lip.last = now;
+      cand === 'next' ? next('👄 ') : prev('👄 ');
+    }
+  }
+
+  // ================= 開始とメニュー =================
+  async function start() {
+    ui.btnStart.disabled = true;
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!audioCtx && AC) audioCtx = new AC();
+      if (audioCtx && audioCtx.state === 'suspended') await audioCtx.resume();
+      if ('speechSynthesis' in window) speechSynthesis.speak(new SpeechSynthesisUtterance(''));
+
+      ui.startStatus.textContent = 'カメラを起動しています…';
+      await startRear();
+      running = true; paused = false;
+      ui.camIdle.hidden = true;
+      ui.btnAI.disabled = false; ui.btnLip.disabled = false;
+      if (rec) ui.btnMic.disabled = false;
+      setStatus();
+      requestWakeLock();
+      camLoop();
+      ui.sheet.hidden = true;
+      ui.btnStart.hidden = true; ui.btnClose.hidden = false;
+      ui.startStatus.textContent = '動作中です。';
+      setTimeout(renderPage, 50);
+      if (rec && !wantListen) { wantListen = true; startRecognition(); updateMic(); }
+    } catch (e) {
+      console.error(e);
+      ui.btnStart.disabled = false;
+      ui.startStatus.innerHTML = '<span class="warn">カメラを起動できません。</span>ブラウザの設定でカメラを許可してから、もう一度押してください。';
+    }
+  }
+
+  ui.btnStart.addEventListener('click', start);
+  ui.btnMenu.addEventListener('click', () => { ui.sheet.hidden = false; });
+  ui.btnClose.addEventListener('click', () => { ui.sheet.hidden = true; setTimeout(renderPage, 50); });
+
+  async function init() {
+    if (!window.isSecureContext) {
+      ui.startStatus.innerHTML = '<span class="warn">https:// のURLで開いてください。</span>カメラとマイクは安全な接続でしか使えません。';
+      return;
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      ui.startStatus.innerHTML = '<span class="warn">このブラウザはカメラに対応していません。</span>Chrome か Safari の最新版で開いてください。';
+      return;
+    }
+    try {
+      await loadDetector();
+      ui.btnStart.disabled = false;
+      ui.startStatus.textContent = `検出AI：${ui.detModel.selectedOptions[0].textContent}（${detectorBackend}）。` + (SR
+        ? '準備ができました。スライドを読み込んでから開始してください（後からでも読み込めます）。'
+        : '準備ができました。このブラウザは音声入力に対応していないため、口パクとタップで操作します。');
+    } catch (e) {
+      console.error(e);
+      ui.startStatus.innerHTML = '<span class="warn">AIモデルを読み込めませんでした。</span>ネットに接続してページを再読み込みしてください。';
+    }
+  }
+  init();
+})();
+</script>
+</body>
+</html>
