@@ -12,13 +12,19 @@
 - `netlify/functions/describe.mjs` … 画像を DeepSeek（OpenAI互換 `/chat/completions`）に送って前方を説明
 - `netlify/functions/command.mjs` … 「グラフのスライドに戻って」など自然な発話を DeepSeek で解釈し、スライド操作（JSON）に変換
   - 短い定型コマンド（次／前／5枚目）は端末内で即実行し、スライド関連の言葉を含む発話だけAIへ送る（`handleCommand()` の `SLIDE_WORDS`）
+- Googleスライド直接編集（編集モード）
+  - ブラウザで Google Identity Services のトークンを取得（スコープ `presentations`）。トークンはサーバーに送らない
+  - `index.html` の `loadGoogleDeck()` が Slides API でプレゼン構造を取得し、`thumbnail` でスライド画像を表示
+  - 編集の発話（`EDIT_WORDS`）は `netlify/functions/slides-edit.mjs` が DeepSeek で batchUpdate の requests に変換し、ブラウザが本人のトークンで `presentations.batchUpdate` を実行
+  - 許可する操作は `ALLOWED` / `EDIT_ALLOWED` の一覧のみ（サーバーと端末の両方で絞る）
+- `netlify/functions/config.mjs` … 画面に渡してよい設定（GoogleクライアントID）を返す
 - `netlify/functions/slides.mjs` … 共有Googleスライドを PDF で取得して中継
 - `models/yolo11s.onnx`, `models/yolo11n.onnx` … Ultralytics YOLO11 を imgsz=640, opset17 で書き出したもの（出力 [1,84,8400]）
 
 ## デプロイ
 - Netlify プロジェクト `walk-slides`（https://walk-slides.netlify.app）。main への push で自動デプロイ（チームメンバーの push も同じ）。
 - 環境変数（Netlifyの管理画面で設定。コードやリポジトリに書かない）
-  - `DEEPSEEK_API_KEY`（必須）, `DEEPSEEK_MODEL`（任意・既定 deepseek-flash）, `APP_PASSCODE`（任意）
+  - `DEEPSEEK_API_KEY`（必須）, `DEEPSEEK_MODEL`（任意・既定 deepseek-flash）, `APP_PASSCODE`（任意）, `GOOGLE_CLIENT_ID`（Google編集モードに必須。OAuthのウェブクライアントID。承認済みJavaScript生成元に https://walk-slides.netlify.app）
 - サイトは Netlify のチームログインで保護されている。
 
 ## 作業の進め方（重要）

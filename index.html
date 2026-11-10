@@ -43,6 +43,8 @@
     display: flex; align-items: center; justify-content: center; overflow: hidden; touch-action: pan-y;
   }
   #slide { display: block; background: #fff; }
+  #gslide { display: block; max-width: 100%; max-height: 100%; object-fit: contain; background: #fff; }
+  .slideArea.editing { box-shadow: inset 0 0 0 4px #4FC3F7; }
   .slideEmpty { color: #B9C3D0; text-align: center; padding: 1rem; line-height: 1.7; font-size: .95rem; }
   .pageNo {
     position: absolute; right: .5rem; bottom: .5rem; background: rgba(14,20,28,.75); color: #F2F5F8;
@@ -174,6 +176,7 @@
 <div class="main">
   <section class="slideArea" id="slideArea">
     <canvas id="slide" hidden></canvas>
+    <img id="gslide" alt="Googleスライド" hidden>
     <div class="slideEmpty" id="slideEmpty">スライドがまだありません。<br>下の「スライド」から読み込んでください。</div>
     <div class="flash" id="flash"></div>
     <div class="pageNo" id="pageNo" hidden></div>
@@ -221,8 +224,12 @@
       <div class="field">GoogleスライドのURLから読み込む（共有設定を「リンクを知っている全員」にしたもの）
         <div class="row">
           <input type="text" id="gUrl" placeholder="https://docs.google.com/presentation/d/…" inputmode="url" autocomplete="off">
-          <button id="btnGLoad">読み込む</button>
+          <button id="btnGLoad">表示だけ</button>
         </div>
+      </div>
+      <div class="field">Googleスライドを声で直接編集する（上のURLのスライドを、あなたのGoogleアカウントで開きます）
+        <button id="btnGLogin">Googleでログインして編集モードで開く</button>
+        <p class="help" id="gHelp">例：「3枚目のタイトルを売上報告に変えて」「このスライドの本文に『来週までに提出』を追加して」「新しいスライドを最後に追加して、タイトルはまとめ」</p>
       </div>
       <div class="status" id="slideStatus"></div>
     </section>
@@ -299,7 +306,7 @@
 
   // ================= 共通 =================
   const ui = {
-    banner: $('banner'), slideArea: $('slideArea'), slide: $('slide'), slideEmpty: $('slideEmpty'),
+    banner: $('banner'), slideArea: $('slideArea'), slide: $('slide'), gslide: $('gslide'), slideEmpty: $('slideEmpty'),
     flash: $('flash'), pageNo: $('pageNo'), view: $('view'), camIdle: $('camIdle'),
     rear: $('rear'), front: $('front'), chipStatus: $('chipStatus'), chipMic: $('chipMic'), chipFps: $('chipFps'),
     chipLip: $('chipLip'), mJaw: $('mJaw'), mPuck: $('mPuck'), heard: $('heard'),
@@ -407,6 +414,9 @@
   // ================= スライド =================
   pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
   let pdfDoc = null, pageNum = 1, renderTask = null, renderToken = 0;
+  let gDeck = null;   // Googleスライド（編集モード）の構造
+  const deckTotal = () => gDeck ? gDeck.slides.length : pdfDoc ? pdfDoc.numPages : 0;
+  const hasDeck = () => !!(gDeck || pdfDoc);
   let slideTexts = [];   // 各スライドのテキスト（AIで「グラフのスライドへ」などを解釈するため）
 
   async function extractSlideTexts(doc) {
@@ -424,6 +434,7 @@
     try {
       ui.slideStatus.textContent = '読み込み中…';
       pdfDoc = await pdfjsLib.getDocument({ data }).promise;
+      gDeck = null; ui.gslide.hidden = true; ui.slideArea.classList.remove('editing');
       pageNum = 1;
       dbg('slide', `PDF読み込み：${label}（${pdfDoc.numPages}枚）`);
       ui.slide.hidden = false; ui.slideEmpty.hidden = true; ui.pageNo.hidden = false;
@@ -440,6 +451,7 @@
   }
 
   async function renderPage() {
+    if (gDeck) return renderGooglePage();
     if (!pdfDoc) return;
     const token = ++renderToken;
     const page = await pdfDoc.getPage(pageNum);
@@ -466,16 +478,189 @@
   }
 
   function goTo(n, how = '') {
-    if (!pdfDoc) { dbg('err', `移動できません：スライドが未読み込み（要求 ${n}枚目）`); showHeard('スライドがまだ読み込まれていません'); return; }
-    const target = Math.max(1, Math.min(pdfDoc.numPages, n));
+    if (!hasDeck()) { dbg('err', `移動できません：スライドが未読み込み（要求 ${n}枚目）`); showHeard('スライドがまだ読み込まれていません'); return; }
+    const target = Math.max(1, Math.min(deckTotal(), n));
     if (target === pageNum) { dbg('slide', `移動なし：すでに ${target}枚目（要求 ${n}）`); flash(target === 1 ? '最初です' : '最後です'); return; }
     dbg('slide', `${pageNum} → ${target} 枚目 ${how}`);
     pageNum = target;
-    flash(`${how}${pageNum} / ${pdfDoc.numPages}`);
+    flash(`${how}${pageNum} / ${deckTotal()}`);
     renderPage();
   }
   const next = (how) => goTo(pageNum + 1, how);
   const prev = (how) => goTo(pageNum - 1, how);
+
+
+  // ================= Googleスライド（Slides APIで直接編集） =================
+  // Googleのトークンはこの端末のブラウザの中だけで使い、サーバーには送らない
+  const GSCOPE = 'https://www.googleapis.com/auth/presentations';
+  const EDIT_ALLOWED = ['insertText', 'deleteText', 'replaceAllText', 'createSlide', 'deleteObject', 'duplicateObject',
+                        'updateSlidesPosition', 'updateTextStyle', 'updateParagraphStyle', 'createShape'];
+  let googleClientId = '', gClient = null, gToken = '', gTokenExp = 0;
+  const thumbCache = new Map();
+
+  fetch('/api/config').then(r => r.json()).then(c => {
+    googleClientId = c.googleClientId || '';
+    dbg('slide', `Google連携：${googleClientId ? 'クライアントID設定済み' : 'クライアントID未設定'}`);
+    if (!googleClientId) return;
+    const sc = document.createElement('script');
+    sc.src = 'https://accounts.google.com/gsi/client'; sc.async = true;
+    sc.onload = () => {
+      gClient = google.accounts.oauth2.initTokenClient({ client_id: googleClientId, scope: GSCOPE, callback: () => {} });
+      dbg('slide', 'Googleログインの準備完了');
+    };
+    document.head.appendChild(sc);
+  }).catch(() => {});
+
+  function requestGoogleToken() {
+    return new Promise((resolve, reject) => {
+      gClient.callback = (r) => {
+        if (r.error) return reject(new Error(r.error_description || r.error));
+        gToken = r.access_token; gTokenExp = Date.now() + (Number(r.expires_in || 3600) - 60) * 1000;
+        dbg('slide', 'Googleにログインしました');
+        resolve(gToken);
+      };
+      gClient.error_callback = (e) => reject(new Error(e && e.type === 'popup_closed' ? 'ログイン画面が閉じられました' : (e && e.message) || 'ログインできませんでした'));
+      gClient.requestAccessToken({ prompt: gToken ? '' : 'consent' });
+    });
+  }
+
+  async function gApi(path, opts = {}) {
+    if (!gToken || Date.now() > gTokenExp) throw new Error('Googleのログインが切れました。メニューの「Googleでログインして編集モードで開く」を押してください');
+    const r = await fetch('https://slides.googleapis.com/v1/' + path, {
+      ...opts, headers: { Authorization: 'Bearer ' + gToken, 'Content-Type': 'application/json' },
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error((d.error && d.error.message) || `Google API エラー ${r.status}`);
+    return d;
+  }
+
+  const textOf = (t) => (t && t.textElements ? t.textElements.map(x => (x.textRun && x.textRun.content) || '').join('') : '').trim();
+  function flattenElements(els, out) {
+    for (const e of els || []) {
+      if (e.elementGroup) { flattenElements(e.elementGroup.children, out); continue; }
+      if (e.shape) out.push({ objectId: e.objectId, kind: 'shape', placeholder: e.shape.placeholder ? e.shape.placeholder.type : undefined, text: textOf(e.shape.text) });
+      else if (e.table) out.push({ objectId: e.objectId, kind: 'table', text: (e.table.tableRows || []).map(row => (row.tableCells || []).map(c => textOf(c.text)).join(' | ')).join(' / ') });
+      else if (e.image) out.push({ objectId: e.objectId, kind: 'image', text: '' });
+      else out.push({ objectId: e.objectId, kind: Object.keys(e).find(k => !['objectId', 'size', 'transform', 'title', 'description'].includes(k)) || 'other', text: '' });
+    }
+    return out;
+  }
+  function summarize(p) {
+    return {
+      id: p.presentationId, title: p.title || '', revisionId: p.revisionId || '',
+      slides: (p.slides || []).map((sl, i) => {
+        let notes = '';
+        const np = sl.slideProperties && sl.slideProperties.notesPage;
+        if (np) {
+          const nid = np.notesProperties && np.notesProperties.speakerNotesObjectId;
+          const ne = (np.pageElements || []).find(e => e.objectId === nid);
+          notes = ne && ne.shape ? textOf(ne.shape.text) : '';
+        }
+        return { index: i + 1, objectId: sl.objectId, elements: flattenElements(sl.pageElements, []), notes };
+      }),
+    };
+  }
+
+  async function loadGoogleDeck(id, keepPage = false) {
+    const p = await gApi(`presentations/${encodeURIComponent(id)}`);
+    gDeck = summarize(p);
+    pdfDoc = null; ui.slide.hidden = true;
+    if (!keepPage) pageNum = 1;
+    pageNum = Math.max(1, Math.min(gDeck.slides.length || 1, pageNum));
+    slideTexts = gDeck.slides.map(s => ({ n: s.index, text: (s.elements.map(e => e.text).join(' ') + (s.notes ? ' [メモ] ' + s.notes : '')).replace(/\s+/g, ' ').slice(0, 300) }));
+    ui.gslide.hidden = false; ui.slideEmpty.hidden = true; ui.pageNo.hidden = false; ui.btnPrev.disabled = false;
+    ui.slideArea.classList.add('editing');
+    dbg('slide', `Googleスライド読み込み：「${gDeck.title}」${gDeck.slides.length}枚（版 ${gDeck.revisionId.slice(0, 8)}）`);
+    await renderGooglePage();
+  }
+
+  async function thumb(slide) {
+    const key = `${slide.objectId}:${gDeck.revisionId}`;
+    if (!thumbCache.has(key)) {
+      thumbCache.set(key, gApi(`presentations/${gDeck.id}/pages/${slide.objectId}/thumbnail?thumbnailProperties.thumbnailSize=LARGE`)
+        .then(d => d.contentUrl).catch(e => { thumbCache.delete(key); throw e; }));
+    }
+    return thumbCache.get(key);
+  }
+
+  async function renderGooglePage() {
+    if (!gDeck || !gDeck.slides.length) return;
+    const token = ++renderToken;
+    const slide = gDeck.slides[pageNum - 1];
+    try {
+      const url = await thumb(slide);
+      if (token !== renderToken) return;
+      ui.gslide.src = url;
+      ui.pageNo.textContent = `${pageNum} / ${gDeck.slides.length} ✏️`;
+      const nx = gDeck.slides[pageNum];
+      if (nx) thumb(nx).catch(() => {});   // 次のページを先読み
+    } catch (e) {
+      dbg('err', `スライド画像を取得できません：${e.message}`);
+      showHeard(`<span class="warn">${esc(e.message)}</span>`, 6000);
+    }
+  }
+
+  ui.btnGLogin = $('btnGLogin');
+  ui.btnGLogin.addEventListener('click', async () => {
+    const v = ui.gUrl.value.trim();
+    const m = v.match(/\/presentation\/d\/([A-Za-z0-9_-]+)/) || v.match(/^([A-Za-z0-9_-]{20,128})$/);
+    if (!m) { ui.slideStatus.innerHTML = '<span class="warn">先に上の欄へGoogleスライドのURLを貼り付けてください。</span>'; return; }
+    if (!googleClientId) { ui.slideStatus.innerHTML = '<span class="warn">Google連携がまだ設定されていません（サーバーの GOOGLE_CLIENT_ID が未設定）。</span>'; return; }
+    if (!gClient) { ui.slideStatus.textContent = 'Googleログインを準備中です。数秒後にもう一度押してください。'; return; }
+    try {
+      ui.slideStatus.textContent = 'Googleにログインしています…';
+      if (!gToken || Date.now() > gTokenExp) await requestGoogleToken();
+      ui.slideStatus.textContent = 'Googleスライドを開いています…';
+      await loadGoogleDeck(m[1]);
+      ui.slideStatus.textContent = `「${gDeck.title}」（${gDeck.slides.length}枚）を編集モードで開きました。声で編集できます。`;
+    } catch (e) {
+      dbg('err', `Googleスライドを開けません：${e.message}`);
+      ui.slideStatus.innerHTML = `<span class="warn">${esc(e.message)}</span>`;
+    }
+  });
+
+  let editBusy = false;
+  async function editCommand(raw) {
+    if (editBusy) { dbg('ai', '前の編集が終わっていないのでスキップ'); return; }
+    editBusy = true;
+    const t0 = performance.now();
+    showHeard(`✏️ <b>${esc(raw)}</b> … AIが編集内容を考えています`, 10000);
+    try {
+      const r = await fetch('/api/slides-edit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-app-passcode': ui.passcode.value.trim() },
+        body: JSON.stringify({ text: raw, page: pageNum, deck: gDeck }),
+      });
+      const d = await r.json().catch(() => ({}));
+      dbg('ai', `編集案 ${r.status}（${Math.round(performance.now() - t0)}ms）：${JSON.stringify(d)}`);
+      if (!r.ok) throw new Error(d.error || 'AIに接続できませんでした');
+
+      // 念のため端末側でも許可した操作だけに絞り、空の要素への deleteText（エラーになる）を除く
+      const textById = new Map();
+      gDeck.slides.forEach(s => s.elements.forEach(e => textById.set(e.objectId, e.text)));
+      const requests = (d.requests || []).filter(q => {
+        const k = Object.keys(q || {})[0];
+        if (!EDIT_ALLOWED.includes(k)) return false;
+        if (k === 'deleteText' && textById.has(q.deleteText.objectId) && !textById.get(q.deleteText.objectId)) return false;
+        return true;
+      });
+      if (!requests.length) { const msg = d.say || '編集内容を特定できませんでした'; showHeard(`✏️ ${esc(msg)}`, 6000); say(msg); return; }
+
+      dbg('ai', `Google Slides API に送信：${requests.map(q => Object.keys(q)[0]).join(', ')}`);
+      await gApi(`presentations/${gDeck.id}:batchUpdate`, { method: 'POST', body: JSON.stringify({ requests }) });
+      await loadGoogleDeck(gDeck.id, true);
+      const msg = d.say || '編集しました';
+      dbg('slide', `編集完了（${Math.round(performance.now() - t0)}ms）：${msg}`);
+      showHeard(`✏️ ${esc(msg)}`, 6000);
+      say(msg);
+    } catch (e) {
+      dbg('err', `編集に失敗：${e.message}`);
+      showHeard(`<span class="warn">編集できませんでした：${esc(e.message)}</span>`, 8000);
+      say('編集できませんでした');
+    } finally {
+      editBusy = false;
+    }
+  }
 
   ui.pdfFile.addEventListener('change', async () => {
     const f = ui.pdfFile.files[0];
@@ -778,7 +963,7 @@ function decodeYolo(out, names, scoreThr, lb, iouThr = 0.45) {
     if (!el || document.getElementById('debug').hidden) return;
     el.textContent = [
       `音声認識：${SR ? (wantListen ? (recActive ? '聞き取り中' : '再開待ち') : 'オフ') : '非対応ブラウザ'}　読み上げ：${speaking ? '中' : '-'}`,
-      `スライド：${pdfDoc ? `${pageNum}/${pdfDoc.numPages}枚（文字抽出 ${slideTexts.length}枚）` : '未読み込み'}　AI解釈：${ui.optAICmd.checked ? 'オン' : 'オフ'}`,
+      `スライド：${hasDeck() ? `${pageNum}/${deckTotal()}枚（${gDeck ? 'Google編集モード' : 'PDF'}、文字抽出 ${slideTexts.length}枚）` : '未読み込み'}　AI解釈：${ui.optAICmd.checked ? 'オン' : 'オフ'}`,
       `カメラ：${running ? (paused ? '一時停止' : '見張り中') : '停止'}　検出AI：${detectorBackend || '-'}　危険連続：${dangerStreak}`,
     ].join('\n');
   }, 400);
@@ -909,7 +1094,7 @@ function decodeYolo(out, names, scoreThr, lb, iouThr = 0.45) {
       const r = await fetch('/api/command', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-app-passcode': ui.passcode.value.trim() },
-        body: JSON.stringify({ text: raw, page: pageNum, total: pdfDoc ? pdfDoc.numPages : 0, slides: slideTexts }),
+        body: JSON.stringify({ text: raw, page: pageNum, total: deckTotal(), slides: slideTexts }),
       });
       const d = await r.json().catch(() => ({}));
       dbg('ai', `応答 ${r.status}（${Math.round(performance.now() - t0)}ms）：${JSON.stringify(d)}`);
@@ -919,7 +1104,7 @@ function decodeYolo(out, names, scoreThr, lb, iouThr = 0.45) {
         case 'next': next(how); break;
         case 'prev': prev(how); break;
         case 'first': goTo(1, how); break;
-        case 'last': goTo(pdfDoc ? pdfDoc.numPages : 1, how); break;
+        case 'last': goTo(deckTotal() || 1, how); break;
         case 'goto': goTo(d.page, how); break;
         case 'say': break;
         default: showHeard(`🎤 ${esc(raw)}（操作なし）`); return;
@@ -934,6 +1119,8 @@ function decodeYolo(out, names, scoreThr, lb, iouThr = 0.45) {
   }
 
   // スライド操作らしい発話だけAIに送る（発表の練習で話している内容まで送らないため）
+  const EDIT_WORDS = ['変えて', 'かえて', '変更', '書き換え', '書いて', '追加', '削除', '消して', '入れて', '置き換え',
+                      '複製', 'コピーして', '並べ替え', '入れ替え', '太字', '色を', '大きく', '小さく', '直して', '修正'];
   const SLIDE_WORDS = ['スライド', 'ページ', '枚', '戻って', 'もどって', '進んで', '進めて', '飛んで', '移動',
                        '見せて', '開いて', '行って', 'いって', '書いてある', '何がある'];
 
@@ -950,11 +1137,18 @@ function decodeYolo(out, names, scoreThr, lb, iouThr = 0.45) {
     if (has('詳しく', 'くわしく')) return askAI('');
     if (has('周り', 'まわり', '前方')) return describeLocal();
 
+    // 編集の指示（「3枚目のタイトルを〜に変えて」など）はGoogleスライドの直接編集へ
+    if (has(...EDIT_WORDS)) {
+      if (gDeck) { dbg('cmd', '→ Googleスライドの編集（DeepSeek → Slides API）'); return editCommand(raw); }
+      dbg('cmd', '編集の指示らしいが、Googleスライドが編集モードで開かれていない');
+      if (hasDeck()) { showHeard('編集するには、メニューの「Googleでログインして編集モードで開く」で開いてください', 6000); return; }
+    }
+
     const pm = t.match(/^(スライド)?([0-9０-９〇一二三四五六七八九十百]+)(枚目|まいめ|ページ|番目)?(に|へ)?(移動|行って|いって)?$/);
     if (pm && (pm[1] || pm[3])) { const n = toNumber(pm[2]); if (n > 0) { dbg('cmd', `→ 端末内：${n}枚目へ`); return goTo(n, '🎤 '); } }
     if (short) {
       if (has('最初', 'さいしょ')) { dbg('cmd', '→ 端末内：最初へ'); return goTo(1, '🎤 '); }
-      if (has('最後', 'さいご')) { dbg('cmd', '→ 端末内：最後へ'); return goTo(pdfDoc ? pdfDoc.numPages : 1, '🎤 '); }
+      if (has('最後', 'さいご')) { dbg('cmd', '→ 端末内：最後へ'); return goTo(deckTotal() || 1, '🎤 '); }
       if (has('次', 'つぎ', 'ネクスト', '進', 'すすめ', 'めくって')) { dbg('cmd', '→ 端末内：次へ'); return next('🎤 '); }
       if (has('前', 'まえ', '戻', 'もど', 'バック')) { dbg('cmd', '→ 端末内：前へ'); return prev('🎤 '); }
     }
@@ -968,9 +1162,9 @@ function decodeYolo(out, names, scoreThr, lb, iouThr = 0.45) {
     if (has('音声オン', '読み上げオン')) { ui.optVoice.checked = true; return say('警告の読み上げをオンにしました'); }
 
     // 「グラフのスライドに戻って」「3つ前に戻って」「次のスライド何？」などはDeepSeekで解釈
-    if (ui.optAICmd.checked && pdfDoc && has(...SLIDE_WORDS)) { dbg('cmd', '→ AI（DeepSeek）に解釈を依頼'); return aiCommand(raw); }
+    if (ui.optAICmd.checked && hasDeck() && has(...SLIDE_WORDS)) { dbg('cmd', '→ AI（DeepSeek）に解釈を依頼'); return aiCommand(raw); }
     dbg('cmd', '→ 何もしない：' + (!has(...SLIDE_WORDS) ? 'スライド関連の言葉が含まれていない'
-      : !pdfDoc ? 'スライドが読み込まれていない' : 'AIでの解釈がオフ'));
+      : !hasDeck() ? 'スライドが読み込まれていない' : 'AIでの解釈がオフ'));
   }
 
   // ================= 口パク（内カメラ） =================
