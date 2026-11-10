@@ -10,6 +10,8 @@
   - 音声入力：Web Speech API（ja-JP）。コマンドは `handleCommand()`
   - 口パク：MediaPipe Face Landmarker の blendshape（jawOpen=次へ / mouthPucker=前へ）
 - `netlify/functions/describe.mjs` … 画像を DeepSeek（OpenAI互換 `/chat/completions`）に送って前方を説明
+- `netlify/functions/command.mjs` … 「グラフのスライドに戻って」など自然な発話を DeepSeek で解釈し、スライド操作（JSON）に変換
+  - 短い定型コマンド（次／前／5枚目）は端末内で即実行し、スライド関連の言葉を含む発話だけAIへ送る（`handleCommand()` の `SLIDE_WORDS`）
 - `netlify/functions/slides.mjs` … 共有Googleスライドを PDF で取得して中継
 - `models/yolo11s.onnx`, `models/yolo11n.onnx` … Ultralytics YOLO11 を imgsz=640, opset17 で書き出したもの（出力 [1,84,8400]）
 
