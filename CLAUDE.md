@@ -16,10 +16,16 @@
 - `models/yolo11s.onnx`, `models/yolo11n.onnx` … Ultralytics YOLO11 を imgsz=640, opset17 で書き出したもの（出力 [1,84,8400]）
 
 ## デプロイ
-- Netlify プロジェクト `walk-slides`（https://walk-slides.netlify.app）。main への push で自動デプロイ。
+- Netlify プロジェクト `walk-slides`（https://walk-slides.netlify.app）。main への push で自動デプロイ（チームメンバーの push も同じ）。
 - 環境変数（Netlifyの管理画面で設定。コードやリポジトリに書かない）
   - `DEEPSEEK_API_KEY`（必須）, `DEEPSEEK_MODEL`（任意・既定 deepseek-flash）, `APP_PASSCODE`（任意）
 - サイトは Netlify のチームログインで保護されている。
+
+## 作業の進め方（重要）
+- PRは作らない。変更は main に直接 push する。push すると Netlify が自動で本番にデプロイする。
+- push の前に必ず `git pull --rebase origin main` で最新を取り込む。
+- コンフリクトが起きたときだけ、自分で解決できなければ別ブランチに push してPRを作り、人間に知らせる。
+- 本番に直接出るので、push 前に構文チェック（`node --check`）と動作確認をしてから push する。
 
 ## ルール
 - APIキーなどの秘密情報をコミットしない。
